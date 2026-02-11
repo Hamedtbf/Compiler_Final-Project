@@ -1,0 +1,15 @@
+weights:
+  token: 0.20    # lower token weight (resilient to simple renames)
+  ast:   0.40    # emphasize AST structural similarity
+  cfg:   0.40    # emphasize CFG similarity for small/compact functions
+
+ast:
+  method: zhang_shasha   # prefer Zhang-Shasha if 'zss' is installed; pipeline will fall back to 'levenshtein' if not
+
+cfg:
+  ged_max_nodes: 200     # permit GED for graphs up to 200 nodes (increase chances GED runs for small functions)
+  ged_timeout: 10.0      # seconds to allow GED enumeration before falling back
+  greedy_fallback: true  # use greedy multiset fallback when GED fails or times out
+
+token:
+  ignore_literal_values: true
