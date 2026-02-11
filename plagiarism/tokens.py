@@ -1,19 +1,55 @@
+# plagiarism/tokens.py
 import io
 import tokenize
 import keyword
 import ast
 import difflib
+import re
 
 
 def extract_protected_names_from_source(src):
     """
     Function and class names, also imported names are considered protected by default.
+    Try AST extraction; if parsing fails, use regexp heuristics to extract function/class/import names.
     """
     protected = set()
     try:
         tree = ast.parse(src)
     except Exception:
+        # fallback heuristics using regex
+        for m in re.finditer(r'^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(', src, flags=re.MULTILINE):
+            protected.add(m.group(1))
+        for m in re.finditer(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\(|:)', src, flags=re.MULTILINE):
+            protected.add(m.group(1))
+        for m in re.finditer(r'^\s*import\s+(.*)$', src, flags=re.MULTILINE):
+            items = m.group(1).split(',')
+            for item in items:
+                item = item.strip()
+                if not item:
+                    continue
+                if ' as ' in item:
+                    alias = item.split(' as ')[1].strip()
+                    if alias:
+                        protected.add(alias)
+                else:
+                    top = item.split('.')[0].strip()
+                    if top:
+                        protected.add(top)
+        for m in re.finditer(r'^\s*from\s+([^\s]+)\s+import\s+(.*)$', src, flags=re.MULTILINE):
+            imported = m.group(2).strip()
+            imported = imported.strip('() ')
+            parts = [p.strip() for p in imported.split(',') if p.strip()]
+            for p in parts:
+                if ' as ' in p:
+                    alias = p.split(' as ')[1].strip()
+                    if alias:
+                        protected.add(alias)
+                else:
+                    name = p.split('.')[0].strip()
+                    if name:
+                        protected.add(name)
         return protected
+
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             protected.add(node.name)

@@ -1,3 +1,4 @@
+# plagiarism/cfg_builder.py
 import ast
 from collections import defaultdict
 
@@ -6,7 +7,6 @@ try:
     NX_AVAILABLE = True
 except Exception:
     NX_AVAILABLE = False
-
 
 if not NX_AVAILABLE:
     print("[warning] networkx not available; CFG features will be limited.")
@@ -72,21 +72,40 @@ class CFGBuilder:
         module_entry = self._new_block(module_name)
         module_exits = self._process_statements(module_tree.body, module_entry)
         results[module_name] = {"entry": module_entry, "exits": list(module_exits)}
+        # create per-function / per-class entries (including methods)
         for node in module_tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 name = node.name
                 self.current_function = name
                 entry = self._new_block(name)
-                body = node.body if not isinstance(node, ast.ClassDef) else node.body
+                body = node.body
                 exits = self._process_statements(body, entry)
                 results[name] = {"entry": entry, "exits": list(exits)}
+            elif isinstance(node, ast.ClassDef):
+                # create entry for the class itself
+                name = node.name
+                self.current_function = name
+                entry = self._new_block(name)
+                body = node.body
+                exits = self._process_statements(body, entry)
+                results[name] = {"entry": entry, "exits": list(exits)}
+                # also create entries for methods inside the class (name as ClassName.method)
+                for child in node.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        method_name = f"{name}.{child.name}"
+                        self.current_function = method_name
+                        m_entry = self._new_block(method_name)
+                        m_exits = self._process_statements(child.body, m_entry)
+                        results[method_name] = {"entry": m_entry, "exits": list(m_exits)}
+        # collect nodes per function
         fn_nodes = defaultdict(list)
         for n, data in self.G.nodes(data=True):
             fn_nodes[data.get('function', module_name)].append(n)
         for fn, info in results.items():
             info['nodes'] = fn_nodes.get(fn, [])
+        # compress blocks
         self._compress_blocks()
-        # refresh nodes after compression
+        # refresh nodes mapping after compression
         fn_nodes = defaultdict(list)
         for n, data in self.G.nodes(data=True):
             fn_nodes[data.get('function', module_name)].append(n)
@@ -200,6 +219,7 @@ class CFGBuilder:
                     self._connect(fe, post)
             return [post]
 
+        # default fallback: attach to current block
         self._add_stmt_to_block(entry_block, stmt)
         return [entry_block]
 
@@ -259,15 +279,12 @@ def export_cfgs_with_graph(builder_result, global_graph):
 def cfg_subgraph_from_nodes(cfgs_by_name, function_name):
     """
     Reconstruct a subgraph for the given function_name using stored 'global_graph' pointer.
+    Returns an empty DiGraph if networkx is not available or function not present.
     """
     try:
         import networkx as nx
     except Exception:
-        # return an empty graph placeholder
-        try:
-            import networkx as nx  # try again to allow earlier import error to surface if needed
-        except Exception:
-            raise RuntimeError("networkx required for cfg_subgraph_from_nodes")
+        raise RuntimeError("networkx required for cfg_subgraph_from_nodes")
 
     if not isinstance(cfgs_by_name, dict):
         return nx.DiGraph()
