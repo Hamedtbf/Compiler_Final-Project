@@ -114,7 +114,7 @@ def normalize_tokens(tokens, protected_names=None, ignore_literal_values=True):
             normalized.append("NUMBER" if ignore_literal_values else tokval)
         elif tokname == "STRING":
             normalized.append("STRING" if ignore_literal_values else tokval)
-        elif tokname in ("NEWLINE", "NL", "INDENT", "DEDENT", "COMMENT"):
+        elif tokname in ("NEWLINE", "NL", "INDENT", "DEDENT"):
             continue
         else:
             normalized.append(tokval)

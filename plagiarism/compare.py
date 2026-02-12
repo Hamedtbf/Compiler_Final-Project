@@ -1,6 +1,7 @@
-# plagiarism/compare.py
-import os
-from .tokens import tokenize_python_source, normalize_tokens, extract_protected_names_from_source, token_sequence_similarity
+from typing import Dict, Any, Tuple, Optional
+
+from .tokens import tokenize_python_source, normalize_tokens, extract_protected_names_from_source, \
+    token_sequence_similarity
 from .ast_utils import ast_similarity
 from .cfg_builder import CFGBuilder, export_cfgs_with_graph, cfg_subgraph_from_nodes
 from .graph_match import compute_cfg_similarity
@@ -29,29 +30,170 @@ def _compute_weighted_score(scores: dict, weights: dict):
     return s / total_w
 
 
-def _safe_token_similarity(src_a, src_b, prot_a, prot_b, cfg):
-    # if both empty -> 1.0, if one empty -> 0.0
+def _safe_token_similarity(src_a: str, src_b: str, prot_a, prot_b, cfg: dict) -> float:
+    """
+    Token-based similarity for two source strings; returns 1/0 for both/one empty.
+    Uses tokenize_python_source + normalize_tokens + token_sequence_similarity.
+    """
     if not src_a and not src_b:
         return 1.0
     if not src_a or not src_b:
         return 0.0
+
     ta = tokenize_python_source(src_a)
     tb = tokenize_python_source(src_b)
     union_prot = set(prot_a or set()) | set(prot_b or set())
-    na = normalize_tokens(ta, protected_names=union_prot,
-                          ignore_literal_values=cfg.get("token", {}).get("ignore_literal_values", True))
-    nb = normalize_tokens(tb, protected_names=union_prot,
-                          ignore_literal_values=cfg.get("token", {}).get("ignore_literal_values", True))
+
+    na = normalize_tokens(
+        ta,
+        protected_names=union_prot,
+        ignore_literal_values=cfg.get("token", {}).get("ignore_literal_values", True),
+    )
+    nb = normalize_tokens(
+        tb,
+        protected_names=union_prot,
+        ignore_literal_values=cfg.get("token", {}).get("ignore_literal_values", True),
+    )
     return token_sequence_similarity(na, nb)
 
 
-def _safe_ast_similarity(src_a, src_b, cfg, prot_a=None, prot_b=None):
-    # if both empty -> 1.0, if one empty -> 0.0
-    if not (src_a or "").strip() and not (src_b or "").strip():
-        return 1.0
-    if not (src_a or "").strip() or not (src_b or "").strip():
-        return 0.0
-    return ast_similarity(src_a, src_b, cfg, prot_a, prot_b)
+# --- small helpers used by compare_two_files and compare_hierarchies ---
+
+
+def _build_exported_cfgs_from_source(src: str, module_name: str) -> dict:
+    """
+    Attempt to build CFGs from source using CFGBuilder and safe parsing.
+    On any error, return empty dict.
+    """
+    try:
+        builder = CFGBuilder()
+        tree = safe_parse_module(src)
+        res = builder.build_for_module(tree, module_name=module_name)
+        return export_cfgs_with_graph(res, builder.G)
+    except Exception:
+        return {}
+
+
+def _compute_cfg_similarity_safe(G1, G2, cfg_options) -> Optional[float]:
+    """
+    Compute CFG similarity while catching exceptions and returning None if not computable.
+    """
+    if G1 is None or G2 is None:
+        return None
+    try:
+        return compute_cfg_similarity(G1, G2, cfg_options)
+    except Exception:
+        return None
+
+
+def _get_graphs_from_exported(cfgs: dict) -> Dict[str, Any]:
+    """
+    Build a mapping name -> subgraph (or None if cannot be built).
+    Uses cfg_subgraph_from_nodes for canonical extraction.
+    """
+    graphs = {}
+    for name in cfgs:
+        try:
+            graphs[name] = cfg_subgraph_from_nodes(cfgs, name)
+        except Exception:
+            graphs[name] = None
+    return graphs
+
+
+def _find_cfg_key_for_name(cfgs: dict, entity_name: str, entity_info: Optional[dict]) -> Optional[str]:
+    """
+    Thin wrapper (kept name) to match the logic inside compare_hierarchies.
+    See compare_hierarchies for full original behavior. This wrapper is used by other helpers.
+    """
+    if not cfgs:
+        return None
+
+    # 1) exact key
+    if entity_name in cfgs:
+        return entity_name
+
+    # 2) last-segment match (module.ename or Class.name)
+    for k in cfgs:
+        if k.split('.')[-1] == entity_name:
+            return k
+
+    # 3) suffix/prefix common patterns
+    for k in cfgs:
+        if k.endswith('.' + entity_name) or k.startswith(entity_name + '.'):
+            return k
+
+    # 4) substring match in key
+    for k in cfgs:
+        if entity_name in k:
+            return k
+
+    # 5) search node attributes/labels in stored graphs for the entity name
+    for k, info in cfgs.items():
+        G = info.get('global_graph') or info.get('graph') or info.get('g')
+        if G is None:
+            node_labels = info.get('node_labels') or info.get('nodes')
+            if node_labels:
+                try:
+                    for nl in node_labels:
+                        if isinstance(nl, str) and entity_name in nl:
+                            return k
+                except Exception:
+                    pass
+            continue
+        try:
+            for _, data in G.nodes(data=True):
+                # common attribute names that might contain entity text
+                for field in ('label', 'name', 'code', 'src'):
+                    v = data.get(field)
+                    if isinstance(v, str) and entity_name in v:
+                        return k
+                # fallback: any string value containing the name
+                for v in data.values():
+                    if isinstance(v, str) and entity_name in v:
+                        return k
+        except Exception:
+            pass
+
+    # 6) line-range matching if entity_info contains lineno/end_lineno and exporter stored ranges
+    if entity_info:
+        start = entity_info.get('lineno') or entity_info.get('start_line') or entity_info.get('start')
+        end = entity_info.get('end_lineno') or entity_info.get('end_line') or entity_info.get('end')
+        if start and end:
+            for k, info in cfgs.items():
+                si = info.get('start_line') or info.get('lineno') or info.get('lno') or info.get('line')
+                ei = info.get('end_line') or info.get('end_lineno')
+                if si and ei:
+                    try:
+                        if (start >= si) and (end <= ei):
+                            return k
+                    except Exception:
+                        pass
+
+    return None
+
+
+def _get_subgraph_for_cfg_key(cfgs: dict, key: Optional[str]):
+    """
+    Return a networkx subgraph or graph object for the function/class identified by key,
+    trying cfg_subgraph_from_nodes first, then falling back to stored graph objects.
+    """
+    if not key:
+        return None
+    try:
+        return cfg_subgraph_from_nodes(cfgs, key)
+    except Exception:
+        info = cfgs.get(key, {}) or {}
+        for gname in ('global_graph', 'graph', 'g'):
+            g = info.get(gname)
+            if g is not None:
+                return g
+        # last resort: maybe info itself is a graph
+        if hasattr(info, "nodes") and hasattr(info, "edges"):
+            return info
+        return None
+
+
+# --- main compare function (refactored to use helpers) ---
 
 
 def compare_two_files(path_a, path_b, config):
@@ -65,10 +207,16 @@ def compare_two_files(path_a, path_b, config):
     # tokens (full-file)
     tokens_a = tokenize_python_source(src_a)
     tokens_b = tokenize_python_source(src_b)
-    norm_a = normalize_tokens(tokens_a, protected_names=prot_a,
-                              ignore_literal_values=config.get("token", {}).get("ignore_literal_values", True))
-    norm_b = normalize_tokens(tokens_b, protected_names=prot_b,
-                              ignore_literal_values=config.get("token", {}).get("ignore_literal_values", True))
+    norm_a = normalize_tokens(
+        tokens_a,
+        protected_names=prot_a,
+        ignore_literal_values=config.get("token", {}).get("ignore_literal_values", True),
+    )
+    norm_b = normalize_tokens(
+        tokens_b,
+        protected_names=prot_b,
+        ignore_literal_values=config.get("token", {}).get("ignore_literal_values", True),
+    )
     token_score = token_sequence_similarity(norm_a, norm_b)
 
     # AST (full-file)
@@ -77,17 +225,11 @@ def compare_two_files(path_a, path_b, config):
     # CFG (best effort using safe parsing; skip failing blocks)
     cfg_score = 0.0
     try:
-        builder_a = CFGBuilder()
-        builder_b = CFGBuilder()
-        tree_a = safe_parse_module(src_a)
-        tree_b = safe_parse_module(src_b)
-        res_a = builder_a.build_for_module(tree_a, module_name="__module_a__")
-        res_b = builder_b.build_for_module(tree_b, module_name="__module_b__")
-        exported_a = export_cfgs_with_graph(res_a, builder_a.G)
-        exported_b = export_cfgs_with_graph(res_b, builder_b.G)
+        exported_a = _build_exported_cfgs_from_source(src_a, "__module_a__")
+        exported_b = _build_exported_cfgs_from_source(src_b, "__module_b__")
         cfg_score = compare_cfgs_by_functions(exported_a, exported_b, config.get("cfg", {}))
     except Exception as e:
-        # if anything goes wrong, fall back gracefully
+        # if anything goes wrong, fall back gracefully (preserve original message + behavior)
         print("[cfg] building/comparing CFGs failed; falling back to AST-based approximation:", e)
         cfg_score = ast_score * 0.9
 
@@ -106,6 +248,9 @@ def compare_two_files(path_a, path_b, config):
     }
 
 
+# --- CFG comparison by functions (kept behavior, extracted small helpers) ---
+
+
 def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
     """
     cfgs_a / cfgs_b: exported dicts (from export_cfgs_with_graph), mapping function_name -> info (with 'global_graph').
@@ -114,13 +259,8 @@ def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
     names_a = set(cfgs_a.keys())
     names_b = set(cfgs_b.keys())
 
-    graphs_a = {}
-    graphs_b = {}
-
-    for name in cfgs_a:
-        graphs_a[name] = cfg_subgraph_from_nodes(cfgs_a, name)
-    for name in cfgs_b:
-        graphs_b[name] = cfg_subgraph_from_nodes(cfgs_b, name)
+    graphs_a = _get_graphs_from_exported(cfgs_a)
+    graphs_b = _get_graphs_from_exported(cfgs_b)
 
     matched_pairs = []
     used_a = set()
@@ -128,17 +268,9 @@ def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
 
     # match identical names
     for name in sorted(names_a.intersection(names_b)):
-        G1 = graphs_a.get(name, None) or None
-        G2 = graphs_b.get(name, None) or None
-        if G1 is None or G2 is None:
-            sim = 0.0
-        else:
-            try:
-                sim = compute_cfg_similarity(G1, G2, cfg_options)
-            except Exception as e:
-                # don't crash here; treat as zero-sim and continue
-                print(f"[cfg] similarity for {name} failed: {e}")
-                sim = 0.0
+        G1 = graphs_a.get(name, None)
+        G2 = graphs_b.get(name, None)
+        sim = _compute_cfg_similarity_safe(G1, G2, cfg_options) or 0.0
         matched_pairs.append((name, name, sim, (G1.number_of_nodes() if G1 is not None else 0),
                               (G2.number_of_nodes() if G2 is not None else 0)))
         used_a.add(name)
@@ -147,20 +279,13 @@ def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
     remaining_a = [n for n in names_a if n not in used_a]
     remaining_b = [n for n in names_b if n not in used_b]
 
-    # compute pairwise sims
+    # compute pairwise sims for remaining items
     pairs = []
     for a in remaining_a:
         for b in remaining_b:
             G1 = graphs_a.get(a)
             G2 = graphs_b.get(b)
-            if (G1 is None) or (G2 is None):
-                sim = 0.0
-            else:
-                try:
-                    sim = compute_cfg_similarity(G1, G2, cfg_options)
-                except Exception as e:
-                    print(f"[cfg] similarity for pair {a} vs {b} failed: {e}")
-                    sim = 0.0
+            sim = _compute_cfg_similarity_safe(G1, G2, cfg_options) or 0.0
             pairs.append((sim, a, b))
     pairs.sort(reverse=True, key=lambda x: x[0])
     for sim, a, b in pairs:
@@ -194,7 +319,9 @@ def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
     return weighted_sum / total_weight
 
 
-# python
+# --- hierarchy compare (refactored for readability) ---
+
+
 def compare_hierarchies(path_a, path_b, config):
     """
     Return a hierarchical comparison structure with per-function, per-class (and per-method),
@@ -209,21 +336,8 @@ def compare_hierarchies(path_a, path_b, config):
     union_prot = set(prot_a) | set(prot_b)
 
     # Build CFGs for both files (best-effort; safe_parse_module used)
-    exported_a = {}
-    exported_b = {}
-    try:
-        builder_a = CFGBuilder()
-        builder_b = CFGBuilder()
-        tree_a = safe_parse_module(src_a)
-        tree_b = safe_parse_module(src_b)
-        res_a = builder_a.build_for_module(tree_a, module_name="__module_a__")
-        res_b = builder_b.build_for_module(tree_b, module_name="__module_b__")
-        exported_a = export_cfgs_with_graph(res_a, builder_a.G)
-        exported_b = export_cfgs_with_graph(res_b, builder_b.G)
-    except Exception:
-        # leave exported_* empty to signal cfg not available at per-item level
-        exported_a = {}
-        exported_b = {}
+    exported_a = _build_exported_cfgs_from_source(src_a, "__module_a__")
+    exported_b = _build_exported_cfgs_from_source(src_b, "__module_b__")
 
     # Extract hierarchical elements
     h_a = extract_code_hierarchy(src_a)
@@ -239,98 +353,17 @@ def compare_hierarchies(path_a, path_b, config):
 
     cfg_opts = config.get("cfg", {})
 
-    # Helper: try many ways to find a cfg entry that corresponds to an entity name
-    def find_cfg_key_for_name(cfgs, entity_name, entity_info=None):
-        """
-        Try to find the most likely key in cfgs that corresponds to entity_name.
-        Returns the matching key or None.
-        """
-        if not cfgs:
-            return None
+    # Helper inline functions (kept local to preserve original structure)
+    def get_subgraph_for_cfg_key_local(cfgs, key):
+        return _get_subgraph_for_cfg_key(cfgs, key)
 
-        # 1) exact key
-        if entity_name in cfgs:
-            return entity_name
+    def find_cfg_key_for_name_local(cfgs, entity_name, entity_info=None):
+        return _find_cfg_key_for_name(cfgs, entity_name, entity_info)
 
-        # 2) last-segment match (module.ename or Class.name)
-        for k in cfgs:
-            if k.split('.')[-1] == entity_name:
-                return k
-
-        # 3) suffix/prefix common patterns
-        for k in cfgs:
-            if k.endswith('.' + entity_name) or k.startswith(entity_name + '.'):
-                return k
-
-        # 4) substring match in key
-        for k in cfgs:
-            if entity_name in k:
-                return k
-
-        # 5) search node attributes/labels in stored graphs for the entity name
-        for k, info in cfgs.items():
-            G = info.get('global_graph') or info.get('graph') or info.get('g')
-            if G is None:
-                # maybe the exporter stored node labels directly
-                node_labels = info.get('node_labels') or info.get('nodes')
-                if node_labels:
-                    try:
-                        for nl in node_labels:
-                            if isinstance(nl, str) and entity_name in nl:
-                                return k
-                    except Exception:
-                        pass
-                continue
-            try:
-                for _, data in G.nodes(data=True):
-                    # common attribute names that might contain entity text
-                    for field in ('label', 'name', 'code', 'src'):
-                        v = data.get(field)
-                        if isinstance(v, str) and entity_name in v:
-                            return k
-                    # fallback: any string value containing the name
-                    for v in data.values():
-                        if isinstance(v, str) and entity_name in v:
-                            return k
-            except Exception:
-                pass
-
-        # 6) line-range matching if entity_info contains lineno/end_lineno and exporter stored ranges
-        if entity_info:
-            start = entity_info.get('lineno') or entity_info.get('start_line') or entity_info.get('start')
-            end = entity_info.get('end_lineno') or entity_info.get('end_line') or entity_info.get('end')
-            if start and end:
-                for k, info in cfgs.items():
-                    si = info.get('start_line') or info.get('lineno') or info.get('lno') or info.get('line')
-                    ei = info.get('end_line') or info.get('end_lineno')
-                    if si and ei:
-                        try:
-                            if (start >= si) and (end <= ei):
-                                return k
-                        except Exception:
-                            pass
-
-        return None
-
-    def get_subgraph_for_cfg_key(cfgs, key):
-        """
-        Return a networkx subgraph or graph object for the function/class identified by key,
-        trying cfg_subgraph_from_nodes first, then falling back to stored graph objects.
-        """
-        if not key:
-            return None
-        try:
-            return cfg_subgraph_from_nodes(cfgs, key)
-        except Exception:
-            info = cfgs.get(key, {}) or {}
-            for gname in ('global_graph', 'graph', 'g'):
-                g = info.get(gname)
-                if g is not None:
-                    return g
-            # last resort: maybe info itself is a graph
-            if hasattr(info, "nodes") and hasattr(info, "edges"):
-                return info
-            return None
+    def get_pair_token_ast_scores(sa: str, sb: str) -> Tuple[float, float]:
+        token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
+        ast_sim = ast_similarity(sa, sb, config, prot_a, prot_b)
+        return token_sim, ast_sim
 
     # Generic greedy pairing by a provided score function
     def greedy_pair_entities(dict_a, dict_b, score_fn):
@@ -356,7 +389,6 @@ def compare_hierarchies(path_a, path_b, config):
         for s, a, b in pairs:
             if a in used_a or b in used_b:
                 continue
-            # allow pairing even for modest scores; unmatched will still be shown
             used_a.add(a)
             used_b.add(b)
             matched.append((a, b, s))
@@ -379,7 +411,7 @@ def compare_hierarchies(path_a, path_b, config):
         sa = a_info.get("source", "")
         sb = b_info.get("source", "")
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
+        ast_sim = ast_similarity(sa, sb, config, prot_a, prot_b)
         combined = (w_token * token_sim + w_ast * ast_sim) / denom_pair
         # small boosts for name-equality or substring matches (helps short names)
         if a_name == b_name:
@@ -400,22 +432,16 @@ def compare_hierarchies(path_a, path_b, config):
         sa = a_info.get("source", "")
         sb = b_info.get("source", "")
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
+        ast_sim = ast_similarity(sa, sb, config, prot_a, prot_b)
 
-        # try to find and compute cfg similarity using heuristics
+        # compute cfg similarity using heuristics
         cfg_sim = None
         try:
-            key_a = find_cfg_key_for_name(exported_a, a_name, a_info)
-            key_b = find_cfg_key_for_name(exported_b, b_name, b_info)
-            G1 = get_subgraph_for_cfg_key(exported_a, key_a)
-            G2 = get_subgraph_for_cfg_key(exported_b, key_b)
-            if G1 is not None and G2 is not None:
-                try:
-                    cfg_sim = compute_cfg_similarity(G1, G2, cfg_opts)
-                except Exception:
-                    cfg_sim = None
-            else:
-                cfg_sim = None
+            key_a = find_cfg_key_for_name_local(exported_a, a_name, a_info)
+            key_b = find_cfg_key_for_name_local(exported_b, b_name, b_info)
+            G1 = get_subgraph_for_cfg_key_local(exported_a, key_a)
+            G2 = get_subgraph_for_cfg_key_local(exported_b, key_b)
+            cfg_sim = _compute_cfg_similarity_safe(G1, G2, cfg_opts)
         except Exception:
             cfg_sim = None
 
@@ -429,21 +455,19 @@ def compare_hierarchies(path_a, path_b, config):
     # handle unmatched functions (present on only one side)
     for a in unmatched_funcs_a:
         sa = functions_a.get(a, {}).get("source", "")
-        sb = ""
-        token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
+        token_sim = _safe_token_similarity(sa, "", prot_a, prot_b, config)
+        ast_sim = ast_similarity(sa, "", config, prot_a, prot_b)
         result["functions"][a] = {"token": token_sim, "ast": ast_sim, "cfg": None,
                                   "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": None},
-                                                                   config.get("weights", {}))}
+                                                                  config.get("weights", {}))}
 
     for b in unmatched_funcs_b:
-        sa = ""
         sb = functions_b.get(b, {}).get("source", "")
-        token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
+        token_sim = _safe_token_similarity("", sb, prot_a, prot_b, config)
+        ast_sim = ast_similarity("", sb, config, prot_a, prot_b)
         result["functions"][b] = {"token": token_sim, "ast": ast_sim, "cfg": None,
                                   "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": None},
-                                                                   config.get("weights", {}))}
+                                                                  config.get("weights", {}))}
 
     # -------------------------
     # Classes: pair & compute per-pair sims (and methods inside classes)
@@ -460,31 +484,25 @@ def compare_hierarchies(path_a, path_b, config):
         sb = b_info.get("source", "")
 
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
+        ast_sim = ast_similarity(sa, sb, config, prot_a, prot_b)
 
-        # try class-level cfg
+        # compute class-level cfg
         cfg_sim = None
         try:
-            key_a = find_cfg_key_for_name(exported_a, a_name, a_info)
-            key_b = find_cfg_key_for_name(exported_b, b_name, b_info)
-            G1 = get_subgraph_for_cfg_key(exported_a, key_a)
-            G2 = get_subgraph_for_cfg_key(exported_b, key_b)
-            if G1 is not None and G2 is not None:
-                try:
-                    cfg_sim = compute_cfg_similarity(G1, G2, cfg_opts)
-                except Exception:
-                    cfg_sim = None
-            else:
-                cfg_sim = None
+            key_a = find_cfg_key_for_name_local(exported_a, a_name, a_info)
+            key_b = find_cfg_key_for_name_local(exported_b, b_name, b_info)
+            G1 = get_subgraph_for_cfg_key_local(exported_a, key_a)
+            G2 = get_subgraph_for_cfg_key_local(exported_b, key_b)
+            cfg_sim = _compute_cfg_similarity_safe(G1, G2, cfg_opts)
         except Exception:
             cfg_sim = None
 
         class_entry_a = {"token": token_sim, "ast": ast_sim, "cfg": cfg_sim,
                          "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": cfg_sim},
-                                                          config.get("weights", {})), "methods": {}}
+                                                         config.get("weights", {})), "methods": {}}
         class_entry_b = {"token": token_sim, "ast": ast_sim, "cfg": cfg_sim,
                          "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": cfg_sim},
-                                                          config.get("weights", {})), "methods": {}}
+                                                         config.get("weights", {})), "methods": {}}
 
         # Methods: pair by similarity inside the class
         methods_a = a_info.get("methods", {}) or {}
@@ -500,27 +518,20 @@ def compare_hierarchies(path_a, path_b, config):
             sa_m = mai.get("source", "")
             sb_m = mbi.get("source", "")
             token_sim_m = _safe_token_similarity(sa_m, sb_m, prot_a, prot_b, config)
-            ast_sim_m = _safe_ast_similarity(sa_m, sb_m, config, prot_a, prot_b)
+            ast_sim_m = ast_similarity(sa_m, sb_m, config, prot_a, prot_b)
 
             # try to find method-level cfg keys; prefer qualified name "Class.method"
             cfg_sim_m = None
             try:
-                # try qualified names first
                 qualified_a = f"{a_name}.{ma}"
                 qualified_b = f"{b_name}.{mb}"
-                key_ma = find_cfg_key_for_name(exported_a, qualified_a, mai) or find_cfg_key_for_name(exported_a, ma,
-                                                                                                      mai)
-                key_mb = find_cfg_key_for_name(exported_b, qualified_b, mbi) or find_cfg_key_for_name(exported_b, mb,
-                                                                                                      mbi)
-                Gma = get_subgraph_for_cfg_key(exported_a, key_ma)
-                Gmb = get_subgraph_for_cfg_key(exported_b, key_mb)
-                if Gma is not None and Gmb is not None:
-                    try:
-                        cfg_sim_m = compute_cfg_similarity(Gma, Gmb, cfg_opts)
-                    except Exception:
-                        cfg_sim_m = None
-                else:
-                    cfg_sim_m = None
+                key_ma = find_cfg_key_for_name_local(exported_a, qualified_a, mai) or find_cfg_key_for_name_local(
+                    exported_a, ma, mai)
+                key_mb = find_cfg_key_for_name_local(exported_b, qualified_b, mbi) or find_cfg_key_for_name_local(
+                    exported_b, mb, mbi)
+                Gma = get_subgraph_for_cfg_key_local(exported_a, key_ma)
+                Gmb = get_subgraph_for_cfg_key_local(exported_b, key_mb)
+                cfg_sim_m = _compute_cfg_similarity_safe(Gma, Gmb, cfg_opts)
             except Exception:
                 cfg_sim_m = None
 
@@ -534,7 +545,7 @@ def compare_hierarchies(path_a, path_b, config):
             mai = methods_a.get(ma, {})
             sa_m = mai.get("source", "")
             token_sim_m = _safe_token_similarity(sa_m, "", prot_a, prot_b, config)
-            ast_sim_m = _safe_ast_similarity(sa_m, "", config, prot_a, prot_b)
+            ast_sim_m = ast_similarity(sa_m, "", config, prot_a, prot_b)
             class_entry_a["methods"][ma] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
                                             "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
                                                 "token": config.get("weights", {}).get("token", 0.0),
@@ -544,7 +555,7 @@ def compare_hierarchies(path_a, path_b, config):
             mbi = methods_b.get(mb, {})
             sb_m = mbi.get("source", "")
             token_sim_m = _safe_token_similarity("", sb_m, prot_a, prot_b, config)
-            ast_sim_m = _safe_ast_similarity("", sb_m, config, prot_a, prot_b)
+            ast_sim_m = ast_similarity("", sb_m, config, prot_a, prot_b)
             class_entry_b["methods"][mb] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
                                             "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
                                                 "token": config.get("weights", {}).get("token", 0.0),
@@ -558,13 +569,13 @@ def compare_hierarchies(path_a, path_b, config):
         cai = classes_a.get(ca, {})
         sa = cai.get("source", "")
         token_sim = _safe_token_similarity(sa, "", prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, "", config, prot_a, prot_b)
+        ast_sim = ast_similarity(sa, "", config, prot_a, prot_b)
         # methods: show them as unmatched
         methods_entry = {}
         for mname, minfo in (cai.get("methods", {}) or {}).items():
             sm = minfo.get("source", "")
             token_sim_m = _safe_token_similarity(sm, "", prot_a, prot_b, config)
-            ast_sim_m = _safe_ast_similarity(sm, "", config, prot_a, prot_b)
+            ast_sim_m = ast_similarity(sm, "", config, prot_a, prot_b)
             methods_entry[mname] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
                                     "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
                                         "token": config.get("weights", {}).get("token", 0.0),
@@ -579,12 +590,12 @@ def compare_hierarchies(path_a, path_b, config):
         cbi = classes_b.get(cb, {})
         sb = cbi.get("source", "")
         token_sim = _safe_token_similarity("", sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity("", sb, config, prot_a, prot_b)
+        ast_sim = ast_similarity("", sb, config, prot_a, prot_b)
         methods_entry = {}
         for mname, minfo in (cbi.get("methods", {}) or {}).items():
             sm = minfo.get("source", "")
             token_sim_m = _safe_token_similarity("", sm, prot_a, prot_b, config)
-            ast_sim_m = _safe_ast_similarity("", sm, config, prot_a, prot_b)
+            ast_sim_m = ast_similarity("", sm, config, prot_a, prot_b)
             methods_entry[mname] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
                                     "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
                                         "token": config.get("weights", {}).get("token", 0.0),
@@ -601,7 +612,7 @@ def compare_hierarchies(path_a, path_b, config):
         sa = h_a.get("variables", {}).get(v, {}).get("source", "")
         sb = h_b.get("variables", {}).get(v, {}).get("source", "")
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
+        ast_sim = ast_similarity(sa, sb, config, prot_a, prot_b)
         final = _compute_weighted_score({"token": token_sim, "ast": ast_sim},
                                         {"token": config.get("weights", {}).get("token", 0.0),
                                          "ast": config.get("weights", {}).get("ast", 0.0)})

@@ -14,7 +14,8 @@ DEFAULT_CONFIG = {
         "cfg": 0.3
     },
     "ast": {
-        "method": "zhang_shasha"  # "levenshtein" or "zhang_shasha"
+        "method": "zhang_shasha",  # "levenshtein" or "zhang_shasha"
+        "normalize_names": False
     },
     "cfg": {
         "ged_max_nodes": 60,

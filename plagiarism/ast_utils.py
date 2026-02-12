@@ -116,6 +116,11 @@ def ast_similarity(src_a, src_b, cfg, protected_a=None, protected_b=None):
     NameNormalizer and then compares either with ZSS (zhang_shasha) or by
     Levenshtein on ast.dump outputs.
     """
+    if not (src_a or "").strip() and not (src_b or "").strip():
+        return 1.0
+    if not (src_a or "").strip() or not (src_b or "").strip():
+        return 0.0
+
     method = cfg.get("ast", {}).get("method", "levenshtein")
 
     # 1) safe parse both modules (this will skip top-level blocks that fail) & normalize names in-place using your
@@ -123,8 +128,16 @@ def ast_similarity(src_a, src_b, cfg, protected_a=None, protected_b=None):
 
     tree_a = safe_parse_module(src_a)
     tree_b = safe_parse_module(src_b)
-    norm_a = NameNormalizer(protected_a).visit(tree_a)
-    norm_b = NameNormalizer(protected_b).visit(tree_b)
+
+    do_norm = cfg.get("ast", {}).get("normalize_names", True)
+
+    if do_norm:
+        norm_a = NameNormalizer(protected_a).visit(tree_a)
+        norm_b = NameNormalizer(protected_b).visit(tree_b)
+    else:
+        norm_a = tree_a
+        norm_b = tree_b
+
     ast.fix_missing_locations(norm_a)
     ast.fix_missing_locations(norm_b)
 
