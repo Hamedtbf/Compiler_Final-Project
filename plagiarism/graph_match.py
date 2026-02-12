@@ -3,14 +3,17 @@ from collections import Counter
 
 try:
     import networkx as nx
+
     NX_AVAILABLE = True
 except Exception:
     NX_AVAILABLE = False
+
 
 # safe label creation for node/edge attribute dicts
 def _safe_label_from_attrs(attrs, max_len=240):
     if not attrs:
         return ""
+
     parts = []
     for k, v in sorted(attrs.items()):
         if isinstance(v, (str, int, float, bool)) or v is None:
@@ -22,10 +25,12 @@ def _safe_label_from_attrs(attrs, max_len=240):
             parts.append(f"{k}={{ {inner} }}")
         else:
             parts.append(f"{k}={type(v).__name__}")
+
     label = "|".join(parts)
     if len(label) > max_len:
         label = label[: max_len - 3] + "..."
     return label
+
 
 def _make_ged_friendly(G):
     """
@@ -33,6 +38,7 @@ def _make_ged_friendly(G):
     """
     if not NX_AVAILABLE:
         raise RuntimeError("networkx required")
+
     H = nx.DiGraph() if isinstance(G, nx.DiGraph) else nx.Graph()
     mapping = {}
     for i, n in enumerate(G.nodes()):
@@ -50,7 +56,9 @@ def _make_ged_friendly(G):
         H.add_edge(mapping[u], mapping[v], label=str(edge_label))
     return H
 
+
 def _greedy_cfg_similarity(G1, G2):
+
     """
     Greedy similarity working on canonical graphs (nodes carry 'label' strings).
     """
@@ -115,7 +123,8 @@ def compute_cfg_similarity(G1, G2, cfg_options=None):
             best = min(best, d)
             if time.time() - start > ged_timeout:
                 raise TimeoutError("GED timed out")
-        denom = max(1, (max(H1.number_of_nodes(), H2.number_of_nodes()) + max(H1.number_of_edges(), H2.number_of_edges())))
+        denom = max(1,
+                    (max(H1.number_of_nodes(), H2.number_of_nodes()) + max(H1.number_of_edges(), H2.number_of_edges())))
         sim = 1.0 - (best / denom)
         return max(0.0, min(1.0, sim))
     except Exception as e:
@@ -125,7 +134,8 @@ def compute_cfg_similarity(G1, G2, cfg_options=None):
             if ged is None:
                 raise TimeoutError("GED returned None (likely timed out)")
             best = float(ged)
-            denom = max(1, (max(H1.number_of_nodes(), H2.number_of_nodes()) + max(H1.number_of_edges(), H2.number_of_edges())))
+            denom = max(1, (max(H1.number_of_nodes(), H2.number_of_nodes()) + max(H1.number_of_edges(),
+                                                                                  H2.number_of_edges())))
             sim = 1.0 - (best / denom)
             return max(0.0, min(1.0, sim))
         except Exception as e2:

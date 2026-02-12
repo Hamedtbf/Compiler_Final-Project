@@ -48,6 +48,7 @@ def safe_parse_module(src: str) -> ast.Module:
             # skip this block if it doesn't parse
             pass
         i = j
+
     return module
 
 
@@ -65,6 +66,7 @@ def get_node_source(node: ast.AST, src: str) -> str:
     lines = src.splitlines(True)
     lineno = getattr(node, "lineno", None)
     end_lineno = getattr(node, "end_lineno", None)
+
     if lineno is not None and end_lineno is not None:
         # lineno and end_lineno are 1-based
         start_i = max(0, lineno - 1)
@@ -87,10 +89,13 @@ def extract_code_hierarchy(src: str) -> Dict[str, Any]:
     """
     tree = safe_parse_module(src)
     out = {"module": {"source": src}, "functions": {}, "classes": {}, "variables": {}}
+
     for node in getattr(tree, "body", []):
+
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             seg = get_node_source(node, src)
             out["functions"][node.name] = {"node": node, "source": seg, "lineno": getattr(node, "lineno", None)}
+
         elif isinstance(node, ast.ClassDef):
             seg = get_node_source(node, src)
             methods = {}
@@ -104,6 +109,7 @@ def extract_code_hierarchy(src: str) -> Dict[str, Any]:
                 "lineno": getattr(node, "lineno", None),
                 "methods": methods,
             }
+
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             names = []
             if isinstance(node, ast.Assign):

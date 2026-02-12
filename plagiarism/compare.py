@@ -6,7 +6,7 @@ from .cfg_builder import CFGBuilder, export_cfgs_with_graph, cfg_subgraph_from_n
 from .graph_match import compute_cfg_similarity
 from .utils import read_source_file
 from .parse_utils import safe_parse_module, extract_code_hierarchy
-import traceback
+
 
 def _compute_weighted_score(scores: dict, weights: dict):
     """
@@ -105,6 +105,7 @@ def compare_two_files(path_a, path_b, config):
         "normalized_tokens_b": norm_b
     }
 
+
 def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
     """
     cfgs_a / cfgs_b: exported dicts (from export_cfgs_with_graph), mapping function_name -> info (with 'global_graph').
@@ -138,7 +139,8 @@ def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
                 # don't crash here; treat as zero-sim and continue
                 print(f"[cfg] similarity for {name} failed: {e}")
                 sim = 0.0
-        matched_pairs.append((name, name, sim, (G1.number_of_nodes() if G1 is not None else 0), (G2.number_of_nodes() if G2 is not None else 0)))
+        matched_pairs.append((name, name, sim, (G1.number_of_nodes() if G1 is not None else 0),
+                              (G2.number_of_nodes() if G2 is not None else 0)))
         used_a.add(name)
         used_b.add(name)
 
@@ -373,7 +375,7 @@ def compare_hierarchies(path_a, path_b, config):
     w_ast = config.get("weights", {}).get("ast", 0.0)
     denom_pair = (w_token + w_ast) if (w_token + w_ast) > 0.0 else 1.0
 
-    def function_pair_score(a_name, a_info, b_name, b_info):
+    def pair_score(a_name, a_info, b_name, b_info):
         sa = a_info.get("source", "")
         sb = b_info.get("source", "")
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
@@ -389,7 +391,7 @@ def compare_hierarchies(path_a, path_b, config):
                 combined = min(1.0, combined + 0.05)
         return combined
 
-    matched_funcs, unmatched_funcs_a, unmatched_funcs_b = greedy_pair_entities(functions_a, functions_b, function_pair_score)
+    matched_funcs, unmatched_funcs_a, unmatched_funcs_b = greedy_pair_entities(functions_a, functions_b, pair_score)
 
     # fill in matched function entries (assign same pair result to both keys to keep interface)
     for a_name, b_name, _score in matched_funcs:
@@ -431,7 +433,8 @@ def compare_hierarchies(path_a, path_b, config):
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
         ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
         result["functions"][a] = {"token": token_sim, "ast": ast_sim, "cfg": None,
-                                  "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": None}, config.get("weights", {}))}
+                                  "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": None},
+                                                                   config.get("weights", {}))}
 
     for b in unmatched_funcs_b:
         sa = ""
@@ -439,7 +442,8 @@ def compare_hierarchies(path_a, path_b, config):
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
         ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
         result["functions"][b] = {"token": token_sim, "ast": ast_sim, "cfg": None,
-                                  "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": None}, config.get("weights", {}))}
+                                  "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": None},
+                                                                   config.get("weights", {}))}
 
     # -------------------------
     # Classes: pair & compute per-pair sims (and methods inside classes)
@@ -447,22 +451,7 @@ def compare_hierarchies(path_a, path_b, config):
     classes_a = h_a.get("classes", {}) or {}
     classes_b = h_b.get("classes", {}) or {}
 
-    def class_pair_score(a_name, a_info, b_name, b_info):
-        sa = a_info.get("source", "")
-        sb = b_info.get("source", "")
-        token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
-        ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
-        combined = (w_token * token_sim + w_ast * ast_sim) / denom_pair
-        if a_name == b_name:
-            combined = min(1.0, combined + 0.10)
-        else:
-            la = a_name.lower() if a_name else ""
-            lb = b_name.lower() if b_name else ""
-            if la and lb and (la in lb or lb in la):
-                combined = min(1.0, combined + 0.05)
-        return combined
-
-    matched_classes, unmatched_classes_a, unmatched_classes_b = greedy_pair_entities(classes_a, classes_b, class_pair_score)
+    matched_classes, unmatched_classes_a, unmatched_classes_b = greedy_pair_entities(classes_a, classes_b, pair_score)
 
     for a_name, b_name, _score in matched_classes:
         a_info = classes_a.get(a_name, {})
@@ -490,29 +479,19 @@ def compare_hierarchies(path_a, path_b, config):
         except Exception:
             cfg_sim = None
 
-        class_entry_a = {"token": token_sim, "ast": ast_sim, "cfg": cfg_sim, "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": cfg_sim}, config.get("weights", {})), "methods": {}}
-        class_entry_b = {"token": token_sim, "ast": ast_sim, "cfg": cfg_sim, "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": cfg_sim}, config.get("weights", {})), "methods": {}}
+        class_entry_a = {"token": token_sim, "ast": ast_sim, "cfg": cfg_sim,
+                         "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": cfg_sim},
+                                                          config.get("weights", {})), "methods": {}}
+        class_entry_b = {"token": token_sim, "ast": ast_sim, "cfg": cfg_sim,
+                         "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim, "cfg": cfg_sim},
+                                                          config.get("weights", {})), "methods": {}}
 
         # Methods: pair by similarity inside the class
         methods_a = a_info.get("methods", {}) or {}
         methods_b = b_info.get("methods", {}) or {}
 
-        def method_pair_score(ma, mai, mb, mbi):
-            sa_m = mai.get("source", "")
-            sb_m = mbi.get("source", "")
-            token_sim_m = _safe_token_similarity(sa_m, sb_m, prot_a, prot_b, config)
-            ast_sim_m = _safe_ast_similarity(sa_m, sb_m, config, prot_a, prot_b)
-            combined = (w_token * token_sim_m + w_ast * ast_sim_m) / denom_pair
-            if ma == mb:
-                combined = min(1.0, combined + 0.10)
-            else:
-                lma = ma.lower() if ma else ""
-                lmb = mb.lower() if mb else ""
-                if lma and lmb and (lma in lmb or lmb in lma):
-                    combined = min(1.0, combined + 0.05)
-            return combined
-
-        matched_methods, unmatched_methods_a, unmatched_methods_b = greedy_pair_entities(methods_a, methods_b, method_pair_score)
+        matched_methods, unmatched_methods_a, unmatched_methods_b = greedy_pair_entities(methods_a, methods_b,
+                                                                                         pair_score)
 
         # fill matched methods (and set cfg using qualified names if possible)
         for ma, mb, _s in matched_methods:
@@ -529,8 +508,10 @@ def compare_hierarchies(path_a, path_b, config):
                 # try qualified names first
                 qualified_a = f"{a_name}.{ma}"
                 qualified_b = f"{b_name}.{mb}"
-                key_ma = find_cfg_key_for_name(exported_a, qualified_a, mai) or find_cfg_key_for_name(exported_a, ma, mai)
-                key_mb = find_cfg_key_for_name(exported_b, qualified_b, mbi) or find_cfg_key_for_name(exported_b, mb, mbi)
+                key_ma = find_cfg_key_for_name(exported_a, qualified_a, mai) or find_cfg_key_for_name(exported_a, ma,
+                                                                                                      mai)
+                key_mb = find_cfg_key_for_name(exported_b, qualified_b, mbi) or find_cfg_key_for_name(exported_b, mb,
+                                                                                                      mbi)
                 Gma = get_subgraph_for_cfg_key(exported_a, key_ma)
                 Gmb = get_subgraph_for_cfg_key(exported_b, key_mb)
                 if Gma is not None and Gmb is not None:
@@ -554,14 +535,20 @@ def compare_hierarchies(path_a, path_b, config):
             sa_m = mai.get("source", "")
             token_sim_m = _safe_token_similarity(sa_m, "", prot_a, prot_b, config)
             ast_sim_m = _safe_ast_similarity(sa_m, "", config, prot_a, prot_b)
-            class_entry_a["methods"][ma] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None, "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)})}
+            class_entry_a["methods"][ma] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
+                                            "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
+                                                "token": config.get("weights", {}).get("token", 0.0),
+                                                "ast": config.get("weights", {}).get("ast", 0.0)})}
 
         for mb in unmatched_methods_b:
             mbi = methods_b.get(mb, {})
             sb_m = mbi.get("source", "")
             token_sim_m = _safe_token_similarity("", sb_m, prot_a, prot_b, config)
             ast_sim_m = _safe_ast_similarity("", sb_m, config, prot_a, prot_b)
-            class_entry_b["methods"][mb] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None, "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)})}
+            class_entry_b["methods"][mb] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
+                                            "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
+                                                "token": config.get("weights", {}).get("token", 0.0),
+                                                "ast": config.get("weights", {}).get("ast", 0.0)})}
 
         result["classes"][a_name] = class_entry_a
         result["classes"][b_name] = class_entry_b
@@ -578,8 +565,15 @@ def compare_hierarchies(path_a, path_b, config):
             sm = minfo.get("source", "")
             token_sim_m = _safe_token_similarity(sm, "", prot_a, prot_b, config)
             ast_sim_m = _safe_ast_similarity(sm, "", config, prot_a, prot_b)
-            methods_entry[mname] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None, "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)})}
-        result["classes"][ca] = {"token": token_sim, "ast": ast_sim, "cfg": None, "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)}), "methods": methods_entry}
+            methods_entry[mname] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
+                                    "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
+                                        "token": config.get("weights", {}).get("token", 0.0),
+                                        "ast": config.get("weights", {}).get("ast", 0.0)})}
+        result["classes"][ca] = {"token": token_sim, "ast": ast_sim, "cfg": None,
+                                 "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim},
+                                                                  {"token": config.get("weights", {}).get("token", 0.0),
+                                                                   "ast": config.get("weights", {}).get("ast", 0.0)}),
+                                 "methods": methods_entry}
 
     for cb in unmatched_classes_b:
         cbi = classes_b.get(cb, {})
@@ -591,8 +585,15 @@ def compare_hierarchies(path_a, path_b, config):
             sm = minfo.get("source", "")
             token_sim_m = _safe_token_similarity("", sm, prot_a, prot_b, config)
             ast_sim_m = _safe_ast_similarity("", sm, config, prot_a, prot_b)
-            methods_entry[mname] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None, "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)})}
-        result["classes"][cb] = {"token": token_sim, "ast": ast_sim, "cfg": None, "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)}), "methods": methods_entry}
+            methods_entry[mname] = {"token": token_sim_m, "ast": ast_sim_m, "cfg": None,
+                                    "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
+                                        "token": config.get("weights", {}).get("token", 0.0),
+                                        "ast": config.get("weights", {}).get("ast", 0.0)})}
+        result["classes"][cb] = {"token": token_sim, "ast": ast_sim, "cfg": None,
+                                 "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim},
+                                                                  {"token": config.get("weights", {}).get("token", 0.0),
+                                                                   "ast": config.get("weights", {}).get("ast", 0.0)}),
+                                 "methods": methods_entry}
 
     # Variables (global) - keep the original simple union behavior
     var_union = set(h_a.get("variables", {}).keys()) | set(h_b.get("variables", {}).keys())
@@ -601,10 +602,9 @@ def compare_hierarchies(path_a, path_b, config):
         sb = h_b.get("variables", {}).get(v, {}).get("source", "")
         token_sim = _safe_token_similarity(sa, sb, prot_a, prot_b, config)
         ast_sim = _safe_ast_similarity(sa, sb, config, prot_a, prot_b)
-        final = _compute_weighted_score({"token": token_sim, "ast": ast_sim}, {"token": config.get("weights", {}).get("token", 0.0), "ast": config.get("weights", {}).get("ast", 0.0)})
+        final = _compute_weighted_score({"token": token_sim, "ast": ast_sim},
+                                        {"token": config.get("weights", {}).get("token", 0.0),
+                                         "ast": config.get("weights", {}).get("ast", 0.0)})
         result["variables"][v] = {"token": token_sim, "ast": ast_sim, "final": final}
 
     return result
-
-
-

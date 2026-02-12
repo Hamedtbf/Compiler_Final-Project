@@ -6,6 +6,7 @@ from .compare import compare_two_files, compare_hierarchies
 
 
 def parse_args():
+
     p = argparse.ArgumentParser(description="Plagiarism detection pipeline (modular).")
     p.add_argument("file_a", help="First Python file")
     p.add_argument("file_b", help="Second Python file")
@@ -16,13 +17,15 @@ def parse_args():
 
 
 def main():
+
     args = parse_args()
     config = load_config(args.config)
     try:
         if args.hierarchy:
+
             report = compare_hierarchies(args.file_a, args.file_b, config)
-            # print a readable hierarchical summary
             print(f"Hierarchical comparison: {args.file_a} <-> {args.file_b}")
+
             print("Functions:")
             for fn, info in report.get("functions", {}).items():
                 print(f"  {fn}: final={info['final']:.4f} (token={info['token']:.4f}, ast={info['ast']:.4f}, cfg={info['cfg']})")
@@ -34,11 +37,14 @@ def main():
             print("Variables:")
             for v, vinfo in report.get("variables", {}).items():
                 print(f"  {v}: final={vinfo['final']:.4f} (token={vinfo['token']:.4f}, ast={vinfo['ast']:.4f})")
+
+
             if args.json:
                 with open(args.json, "w", encoding="utf-8") as fh:
                     json.dump(report, fh, indent=2)
                 print(f"JSON report written to {args.json}")
         else:
+
             result = compare_two_files(args.file_a, args.file_b, config)
             print("Comparison results:")
             print(f"  token similarity: {result['token']:.4f}")

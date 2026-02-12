@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
         "cfg": 0.3
     },
     "ast": {
-        "method": "levenshtein"  # "levenshtein" or "zhang_shasha"
+        "method": "zhang_shasha"  # "levenshtein" or "zhang_shasha"
     },
     "cfg": {
         "ged_max_nodes": 60,
@@ -22,7 +22,7 @@ DEFAULT_CONFIG = {
         "greedy_fallback": True
     },
     "token": {
-        "ignore_literal_values": True
+        "ignore_literal_values": False
     }
 }
 

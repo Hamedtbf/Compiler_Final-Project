@@ -1,6 +1,8 @@
 import ast
 import difflib
 
+from plagiarism.parse_utils import safe_parse_module
+
 try:
     import zss
     ZSS_AVAILABLE = True
@@ -63,15 +65,6 @@ def ast_dump_normalized(src, protected_names=None):
     return ast.dump(norm_tree, include_attributes=False)
 
 
-def ast_similarity_levenshtein(src_a, src_b, protected_names_a=None, protected_names_b=None):
-    dump_a = ast_dump_normalized(src_a, protected_names_a)
-    dump_b = ast_dump_normalized(src_b, protected_names_b)
-    if not dump_a and not dump_b:
-        return 1.0
-    sm = difflib.SequenceMatcher(None, dump_a, dump_b)
-    return sm.ratio()
-
-
 # zss/zhang-shasha method
 def _ast_to_zss(node):
     nd = zss.Node(node.__class__.__name__)
@@ -113,26 +106,66 @@ def ast_similarity_zhang_shasha(src_a, src_b, protected_names_a=None, protected_
     norm_b = NameNormalizer(protected_names_b).visit(tree_b)
     ast.fix_missing_locations(norm_a)
     ast.fix_missing_locations(norm_b)
+    return compute_zss(norm_a, norm_b)
+
+
+def ast_similarity(src_a, src_b, cfg, protected_a=None, protected_b=None):
+    """
+    AST-level similarity using safe parsing (safe_parse_module) so files with
+    top-level parse errors don't break comparison. Normalizes names via
+    NameNormalizer and then compares either with ZSS (zhang_shasha) or by
+    Levenshtein on ast.dump outputs.
+    """
+    method = cfg.get("ast", {}).get("method", "levenshtein")
+
+    # 1) safe parse both modules (this will skip top-level blocks that fail) & normalize names in-place using your
+    # NameNormalizer
+
+    tree_a = safe_parse_module(src_a)
+    tree_b = safe_parse_module(src_b)
+    norm_a = NameNormalizer(protected_a).visit(tree_a)
+    norm_b = NameNormalizer(protected_b).visit(tree_b)
+    ast.fix_missing_locations(norm_a)
+    ast.fix_missing_locations(norm_b)
+
+    # 3) If user requested zhang_shasha and zss available, use it on the normalized ASTs
+    if method == "zhang_shasha":
+        if not ZSS_AVAILABLE:
+            print("[ast] zss not available; falling back to levenshtein")
+        else:
+            try:
+                return compute_zss(norm_a, norm_b)
+            except Exception as e:
+                # on any failure, fall back to levenshtein-style comparison
+                print(f"[ast] zhang_shasha failed: {e}; falling back to levenshtein")
+
+    # 4) Default: levenshtein comparison on the normalized AST dumps
+    try:
+        return compute_levenshtein(norm_a, norm_b)
+    except Exception as e:
+        print(f"[ast] levenshtein failed: {e};")
+
+
+def compute_levenshtein(norm_a, norm_b) -> float:
+    dump_a = ast.dump(norm_a, include_attributes=False)
+    dump_b = ast.dump(norm_b, include_attributes=False)
+    if not dump_a and not dump_b:
+        return 1.0
+    sm = difflib.SequenceMatcher(None, dump_a, dump_b)
+    return sm.ratio()
+
+
+# --------------------------------------helper methods---------------------------------------------
+def compute_zss(norm_a, norm_b) -> float:
     za = _ast_to_zss(norm_a)
     zb = _ast_to_zss(norm_b)
+
     def label_dist(a, b):
         return 0 if a == b else 1
+
     ted = zss.simple_distance(za, zb, get_children=lambda n: n.children, label_dist=label_dist)
     size_a = _zss_tree_size(za)
     size_b = _zss_tree_size(zb)
     denom = float(size_a + size_b) if (size_a + size_b) > 0 else 1.0
     sim = 1.0 - (ted / denom)
     return max(0.0, min(1.0, sim))
-
-
-def ast_similarity(src_a, src_b, cfg, protected_a=None, protected_b=None):
-    method = cfg.get("ast", {}).get("method", "levenshtein")
-    if method == "zhang_shasha":
-        if not ZSS_AVAILABLE:
-            print("[ast] zss not available; falling back to levenshtein")
-        else:
-            try:
-                return ast_similarity_zhang_shasha(src_a, src_b, protected_a, protected_b)
-            except Exception as e:
-                print(f"[ast] zhang_shasha failed: {e}; falling back to levenshtein")
-    return ast_similarity_levenshtein(src_a, src_b, protected_a, protected_b)
