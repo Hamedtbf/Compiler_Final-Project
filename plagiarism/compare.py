@@ -123,8 +123,6 @@ def _get_graphs_from_exported(cfgs: dict) -> Dict[str, Any]:
 def _find_cfg_key_for_name(cfgs: dict, entity_name: str, entity_info: Optional[dict]) -> Optional[str]:
     """
     Heuristic key lookup to match an entity name to an exported cfg key.
-    This mirrors the previous (more complex) logic: exact, last-segment, suffix/prefix,
-    substring, node label search, and optional line-range matching if entity_info contains ranges.
     """
     if not cfgs or not entity_name:
         return None
@@ -191,7 +189,7 @@ def _find_cfg_key_for_name(cfgs: dict, entity_name: str, entity_info: Optional[d
 def compare_cfgs_by_functions(cfgs_a, cfgs_b, cfg_options):
     """
     Compute a single similarity score between two exported-CFG sets by matching functions.
-    Behaviour preserved from original: match identical names first, then greedy best cross matches,
+    match identical names first, then greedy best cross-matches,
     compute a weighted average where weight is proportional to node counts (fallback to 1).
     Returns a float in [0,1], with fallback to 1.0 when no nodes/weights are available.
     """
@@ -328,7 +326,6 @@ def compare_two_files(path_a, path_b, config):
 def compare_hierarchies(path_a, path_b, config):
     """
     Hierarchical comparison (functions, classes + methods, variables).
-    This keeps the original greedy pairing behaviour and class-method treatment.
     """
     src_a = read_source_file(path_a)
     src_b = read_source_file(path_b)
@@ -382,7 +379,7 @@ def compare_hierarchies(path_a, path_b, config):
 
     def greedy_pair_entities(dict_a, dict_b, score_fn):
         """
-        Generic greedy bipartite matching helper used for functions, classes and methods.
+        Generic greedy matching helper used for functions, classes and methods.
         """
         names_a = list(dict_a.keys())
         names_b = list(dict_b.keys())

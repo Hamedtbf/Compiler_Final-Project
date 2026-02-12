@@ -67,6 +67,7 @@ class CFGBuilder:
             self.G.add_edge(a, b)
 
     def build_for_module(self, module_tree, module_name="__module__"):
+
         self.current_function = module_name
         results = {}
         module_entry = self._new_block(module_name)
