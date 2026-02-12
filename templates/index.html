@@ -67,6 +67,56 @@
         </div>
     </main>
 
-   
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+
+        async function runComparison() {
+            const codeA = document.getElementById('codeA').value;
+            const codeB = document.getElementById('codeB').value;
+            const btn = document.getElementById('compareBtn');
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+            const resultSection = document.getElementById('resultSection');
+            const resultJson = document.getElementById('resultJson');
+
+            if(!codeA || !codeB) {
+                alert("Please provide both code snippets.");
+                return;
+            }
+
+            // Reset UI
+            resultSection.classList.add('hidden');
+            progressContainer.classList.remove('hidden');
+            progressBar.classList.remove('animate-fill');
+            void progressBar.offsetWidth; // Trigger reflow
+            progressBar.classList.add('animate-fill');
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                const response = await fetch('/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code_a: codeA, code_b: codeB })
+                });
+
+                const data = await response.json();
+
+                // Wait for animation to finish (1.2s)
+                setTimeout(() => {
+                    progressContainer.classList.add('hidden');
+                    resultSection.classList.remove('hidden');
+                    resultJson.innerText = JSON.stringify(data, null, 2);
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }, 1200);
+
+            } catch (err) {
+                alert("Error connecting to backend.");
+                btn.disabled = false;
+            }
+        }
+    </script>
 </body>
 </html>
