@@ -1,0 +1,14 @@
+blinker==1.9.0
+click==8.3.1
+Flask==3.1.2
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+networkx==3.6.1
+numpy==2.4.2
+pyaml==26.2.1
+PyYAML==6.0.3
+scipy==1.17.0
+six==1.17.0
+Werkzeug==3.1.5
+zss==1.2.0
