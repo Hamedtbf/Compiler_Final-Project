@@ -19,7 +19,7 @@ def extract_protected_names_from_source(src):
         # fallback heuristics using regex
         for m in re.finditer(r'^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(', src, flags=re.MULTILINE):
             protected.add(m.group(1))
-        for m in re.finditer(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\s*(\(|:)', src, flags=re.MULTILINE):
+        for m in re.finditer(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\s*([(:])', src, flags=re.MULTILINE):
             protected.add(m.group(1))
         for m in re.finditer(r'^\s*import\s+(.*)$', src, flags=re.MULTILINE):
             items = m.group(1).split(',')
@@ -82,7 +82,6 @@ def tokenize_python_source(src):
     try:
         gen = tokenize.generate_tokens(io.StringIO(src).readline)
         for toknum, tokval, start, end, line in gen:
-
             tokname = tokenize.tok_name.get(toknum, str(toknum))
             tokens.append((toknum, tokname, tokval))
 
@@ -91,7 +90,7 @@ def tokenize_python_source(src):
     return tokens
 
 
-def normalize_tokens(tokens, protected_names=None, ignore_literal_values=True):
+def normalize_tokens(tokens, protected_names=None, ignore_literal_values=True, normalize_names=True):
     if protected_names is None:
         protected_names = set()
 
@@ -102,20 +101,29 @@ def normalize_tokens(tokens, protected_names=None, ignore_literal_values=True):
     for toknum, tokname, tokval in tokens:
 
         if tokname == "NAME":
-            if tokval in protected_names or keyword.iskeyword(tokval) or tokval in ("True", "False", "None"):
+            # if we are preserving raw identifiers, just append tokval
+            if not normalize_names:
                 normalized.append(tokval)
             else:
-                if tokval not in name_map:
-                    name_counter += 1
-                    name_map[tokval] = f"VAR_{name_counter}"
-                normalized.append(name_map[tokval])
+                if (tokval in protected_names
+                        or keyword.iskeyword(tokval)
+                        or tokval in ("True", "False", "None")):
+                    normalized.append(tokval)
+                else:
+                    if tokval not in name_map:
+                        name_counter += 1
+                        name_map[tokval] = f"VAR_{name_counter}"
+                    normalized.append(name_map[tokval])
 
         elif tokname == "NUMBER":
             normalized.append("NUMBER" if ignore_literal_values else tokval)
+
         elif tokname == "STRING":
             normalized.append("STRING" if ignore_literal_values else tokval)
+
         elif tokname in ("NEWLINE", "NL", "INDENT", "DEDENT"):
             continue
+
         else:
             normalized.append(tokval)
 

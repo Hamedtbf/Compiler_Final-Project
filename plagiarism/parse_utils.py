@@ -1,6 +1,4 @@
-# plagiarism/parse_utils.py
 import ast
-import textwrap
 from typing import Dict, Any
 
 

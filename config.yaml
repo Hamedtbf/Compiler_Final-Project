@@ -6,6 +6,7 @@ weights:
 ast:
   method: zhang_shasha   # prefer Zhang-Shasha if 'zss' is installed; pipeline will fall back to 'levenshtein' if not
   normalize_names: False
+
 cfg:
   ged_max_nodes: 200     # permit GED for graphs up to 200 nodes (increase chances GED runs for small functions)
   ged_timeout: 10.0      # seconds to allow GED enumeration before falling back
@@ -13,3 +14,4 @@ cfg:
 
 token:
   ignore_literal_values: True
+  normalize_names: True

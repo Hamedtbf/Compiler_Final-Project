@@ -23,7 +23,8 @@ DEFAULT_CONFIG = {
         "greedy_fallback": True
     },
     "token": {
-        "ignore_literal_values": False
+        "ignore_literal_values": False,
+        "normalize_names": False
     }
 }
 

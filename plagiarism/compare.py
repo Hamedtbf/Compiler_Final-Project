@@ -48,11 +48,13 @@ def _safe_token_similarity(src_a: str, src_b: str, prot_a, prot_b, cfg: dict) ->
         ta,
         protected_names=union_prot,
         ignore_literal_values=cfg.get("token", {}).get("ignore_literal_values", True),
+        normalize_names=cfg.get("token", {}).get("normalize_names", False)
     )
     nb = normalize_tokens(
         tb,
         protected_names=union_prot,
         ignore_literal_values=cfg.get("token", {}).get("ignore_literal_values", True),
+        normalize_names=cfg.get("token", {}).get("normalize_names", False)
     )
     return token_sequence_similarity(na, nb)
 
@@ -211,11 +213,13 @@ def compare_two_files(path_a, path_b, config):
         tokens_a,
         protected_names=prot_a,
         ignore_literal_values=config.get("token", {}).get("ignore_literal_values", True),
+        normalize_names=config.get("token", {}).get("normalize_names", False)
     )
     norm_b = normalize_tokens(
         tokens_b,
         protected_names=prot_b,
         ignore_literal_values=config.get("token", {}).get("ignore_literal_values", True),
+        normalize_names=config.get("token", {}).get("normalize_names", False)
     )
     token_score = token_sequence_similarity(norm_a, norm_b)
 
@@ -600,6 +604,7 @@ def compare_hierarchies(path_a, path_b, config):
                                     "final": _compute_weighted_score({"token": token_sim_m, "ast": ast_sim_m}, {
                                         "token": config.get("weights", {}).get("token", 0.0),
                                         "ast": config.get("weights", {}).get("ast", 0.0)})}
+
         result["classes"][cb] = {"token": token_sim, "ast": ast_sim, "cfg": None,
                                  "final": _compute_weighted_score({"token": token_sim, "ast": ast_sim},
                                                                   {"token": config.get("weights", {}).get("token", 0.0),
