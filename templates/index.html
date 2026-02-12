@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeDiff | Plagiarism Detector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes fillBar { from { width: 0%; } to { width: 100%; } }
+        .animate-fill { animation: fillBar 1.0s forwards ease-in-out; }
+        .code-input { font-family: 'Fira Code', monospace; resize: none; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+    <nav class="border-b border-slate-800 p-4 bg-slate-900/50 backdrop-blur-md sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i data-lucide="shield-check" class="text-blue-400"></i>
+                <span class="text-xl font-bold tracking-tight">CodeDiff</span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto p-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 h-[400px]">
+            <textarea id="codeA" class="code-input bg-slate-800 border border-slate-700 rounded-lg p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" placeholder="# Code A..."></textarea>
+            <textarea id="codeB" class="code-input bg-slate-800 border border-slate-700 rounded-lg p-4 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" placeholder="# Code B..."></textarea>
+        </div>
+
+        <div class="mt-8 flex flex-col items-center gap-4">
+            <div class="flex gap-4">
+                <button onclick="runComparison('basic')" class="bg-slate-700 hover:bg-slate-600 transition-colors px-6 py-3 rounded-lg font-semibold flex items-center gap-2">
+                    <i data-lucide="search" class="w-4 h-4"></i> Basic Compare
+                </button>
+                <button onclick="runComparison('hierarchy')" class="bg-blue-600 hover:bg-blue-500 transition-colors px-6 py-3 rounded-lg font-semibold flex items-center gap-2">
+                    <i data-lucide="layers" class="w-4 h-4"></i> Hierarchical Compare
+                </button>
+            </div>
+
+            <div id="progressContainer" class="w-full max-w-md mt-4 hidden">
+                <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                    <div id="progressBar" class="bg-blue-500 h-full w-0"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="resultSection" class="mt-10 hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold flex items-center gap-2">
+                    <i data-lucide="file-json" class="text-green-400"></i> Analysis Results
+                </h3>
+                <button onclick="copyResult()" class="text-xs bg-slate-800 px-3 py-1 rounded hover:bg-slate-700">Copy JSON</button>
+            </div>
+            <pre id="resultJson" class="bg-slate-950 border border-slate-800 p-6 rounded-xl overflow-x-auto text-blue-300 text-sm"></pre>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+
+        async function runComparison(mode) {
+            const codeA = document.getElementById('codeA').value;
+            const codeB = document.getElementById('codeB').value;
+            if(!codeA || !codeB) return alert("Fill both sides!");
+
+            // UI Reset
+            document.getElementById('resultSection').classList.add('hidden');
+            const progress = document.getElementById('progressContainer');
+            const bar = document.getElementById('progressBar');
+            
+            progress.classList.remove('hidden');
+            bar.classList.remove('animate-fill');
+            void bar.offsetWidth; 
+            bar.classList.add('animate-fill');
+
+            try {
+                const response = await fetch('/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code_a: codeA, code_b: codeB, mode: mode })
+                });
+
+                const data = await response.json();
+                
+                // Delay showing result until bar fills
+                setTimeout(() => {
+                    progress.classList.add('hidden');
+                    document.getElementById('resultSection').classList.remove('hidden');
+                    document.getElementById('resultJson').innerText = JSON.stringify(data, null, 2);
+                }, 1000);
+
+            } catch (err) {
+                alert("Server error.");
+            }
+        }
+
+        function copyResult() {
+            const text = document.getElementById('resultJson').innerText;
+            navigator.clipboard.writeText(text);
+        }
+    </script>
+</body>
+</html>
